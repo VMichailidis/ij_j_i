@@ -9,15 +9,16 @@
 #endif
 
 #define RAND_GEN 10
+
 template <int N>
-void print_vec(vec_t<T, N> &v){
+void print_array(T (&v)[N]){
 	cout << "{";
 	for(int i = 0; i < N; i++){cout << v[i]<< " ";}
 	cout << "}" << endl;
 }
 
 template<int N, int M>
-void print_mat(mat_t<T,N,M> &m){
+void print_mat(T (&m)[N][M]){
 	cout << "[";
 	for(int i = 0; i<N; i++){
 		cout << "[";
@@ -29,106 +30,68 @@ void print_mat(mat_t<T,N,M> &m){
 	cout << "]" << endl;
 }
 
-template <int PARTS, int MAX_SIZE ,int SIZE>
-void get_parted_vec(vec_parted<T, PARTS, MAX_SIZE, SIZE> &v_hw, vec_t<T, SIZE> &v_sw){
-	vec_t<T, MAX_SIZE> temp;
-	vec_t<T, SIZE%MAX_SIZE> temp_r;
-	for(int i = 0; i < PARTS; i++){
-		for(int j = 0; j < MAX_SIZE; j++){
-			v_sw[i*(MAX_SIZE) + j] = rand() % RAND_GEN;
-			temp[j] = v_sw[i*(MAX_SIZE) + j];
 
-		}
-		v_hw.prt[i] = temp;
+template<int N>
+void get_rand_array(T (&arr)[N]){
+	for(int i = 0; i<N; i++){
+		arr[i] = rand()%RAND_GEN;
 	}
-	for(int i = 0; i < SIZE%MAX_SIZE; i++){
-		v_sw[PARTS*MAX_SIZE + i] = rand() % RAND_GEN;
-		temp_r[i] = v_sw[PARTS*MAX_SIZE + i];
- 	}
-	v_hw.rem = temp_r;
 }
-
-template<int PARTS, int MAX_SIZE, int ROWS, int COLS>
-void get_weights(mat_parted<T, PARTS, MAX_SIZE, ROWS, COLS> &w_hw, mat_t<T, ROWS, COLS> &w_sw){
+template<int ROWS, int COLS>
+void get_weights(T (&w)[ROWS][COLS]){
 	for(int i = 0; i < ROWS; i++){
-		get_parted_vec<PARTS, MAX_SIZE, COLS>(w_hw[i], w_sw[i]);
+		get_rand_array(w[i]);
 	}
 }
 
 
 template <int N>
-void cdot(vec_t<T, N> &v1, vec_t<T, N> &v2, T &out){
+void cdot(T &out, T (&v1)[N], T (&v2)[N]){
 	out = 0;
 	for(int i=0; i<N; i++){out+=v1[i]*v2[i];}
 }
 
 template<int IN, int OUT>
-void ij_j_i_model(mat_t<T, OUT, IN> &w, vec_t<T, IN> &in, vec_t<T, OUT> &out){
+void ij_j_i_model(T (&out)[OUT], T (&w)[OUT][IN], T (&in)[IN]){
 	for(int i = 0; i<OUT; i++){
-		cdot<IN>(w[i], in, out[i]);
+		cdot(out[i], w[i], in);
 	}
 }
 
 int out_cmp(T pred_sw, T pred_hw){
-
-	T temp = pred_sw;	
-//	error when positive predicted software values differ from predicted hardware values
-	int ret = (hls::abs(temp - pred_hw) > 1);
-	return ret;
-}
-template<int PARTS, int MAX_LEN, int SIZE>
-int vec_out_cmp(vec_parted<T, PARTS, MAX_LEN, SIZE> &pred_hw, vec_t <T, SIZE> &pred_sw){
-
-	int ret = 0;
-	for(int i = 0; i< PARTS; i++){
-		for(int j = 0; j < MAX_LEN; SIZE){
-			ret += (hls::abs( pred_hw.prt[i][j] - pred_sw[i*MAX_LEN + j] > 1));
-		}
-	}
-	for(int i = 0; i < SIZE%MAX_LEN; i ++){
-		ret += (hls::abs( pred_hw.rem[i] - pred_sw[PARTS*MAX_LEN + i] > 1));
-	}
+	int ret = (hls::abs(pred_sw - pred_hw) > 1);
 	return ret;
 }
 
 int test(int Num){
-	mat_parted<T, PARTS_IN_c, MAX_LEN_c, OUT_DIM_c, IN_DIM_c> w_hw;
-	vec_parted<T, PARTS_IN_c, MAX_LEN_c, IN_DIM_c> in_hw;
-	vec_parted<T, PARTS_OUT_c, MAX_LEN_c, OUT_DIM_c> out_hw;
 
-
-	mat_t<T, OUT_DIM_c, IN_DIM_c> w_sw;
-	vec_t<T, IN_DIM_c> in_sw;
-	vec_t<T, OUT_DIM_c> out_sw, out_sim;
+	T w[OUT_DIM_c][IN_DIM_c], in[IN_DIM_c], out_sw[OUT_DIM_c], out_hw[OUT_DIM_c];
 	int err_count = 0;
+	int err_local = 0;
 	for(int i = 0; i<Num; i++){
+		err_local = 0;
 		//setup
-		get_parted_vec<PARTS_IN_c, MAX_LEN_c, IN_DIM_c>(in_hw, in_sw);
-
-		get_weights<PARTS_IN_c, MAX_LEN_c, OUT_DIM_c, IN_DIM_c>(w_hw, w_sw);
-
+		get_rand_array(in);
+		get_weights(w);
 		//genertate expected result
-		ij_j_i_model<IN_DIM_c, OUT_DIM_c>(w_sw, in_sw, out_sw);
+		ij_j_i_model(out_sw, w, in);
 
 
 		//get design results
-		ij_j_i_main(w_hw, in_hw, out_hw);
-
-		copy_parted<PARTS_OUT_c, MAX_LEN_c, OUT_DIM_c>(out_hw, out_sim);
+		ij_j_i_main(out_hw, w, in);
 
 		cout << "Results: {";
 		for (int i = 0; i<OUT_DIM_c; i++){
 				cout << " " << out_sw[i];
-			if(out_sim[i]!=out_sw[i]){err_count += 1;cout << "*";}
+			if(out_hw[i]!=out_sw[i]){err_local += 1;cout << "*";}
 		}
 
 		cout << "}" << endl;
-		print_vec<OUT_DIM_c>(out_sim);
-		if(err_count){cout<< "ERROR: " << err_count << " Mismatches detected" << endl;}
+		if(err_count){cout<< "ERROR: " << err_local << " Mismatches detected" << endl;}
 		else{cout << "Test Passed Successfully" << endl;}
+		err_count += (err_local>0);
 	}
 	return err_count;
-
 }
 
 int main(int argc, char **argv){
